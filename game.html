@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UNO P2P — Partie en cours</title>
+    <meta name="description" content="Plateau de jeu UNO Peer-to-Peer." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link rel="stylesheet" href="css/game.css" />
+</head>
+
+<body>
+
+    <div class="game-wrapper">
+
+        <!-- BARRE SUPÉRIEURE -->
+        <header class="game-topbar">
+            <div class="game-logo">UNO</div>
+            <div class="game-info">
+                <div class="game-info-item">
+                    <span>Sens :</span>
+                    <strong id="direction-indicator" class="direction-indicator">→</strong>
+                </div>
+                <div class="game-info-item">
+                    <span>Couleur :</span>
+                    <strong id="active-color">⚫</strong>
+                </div>
+                <div id="pending-draw" class="pending-draw hidden">+0 en attente</div>
+            </div>
+            <button id="btn-leave" class="btn btn-danger" style="padding:8px 16px;font-size:0.8rem;">
+                ← Quitter
+            </button>
+        </header>
+
+        <!-- ZONE CENTRALE -->
+        <main class="game-center">
+
+            <!-- ADVERSAIRES -->
+            <div id="opponents-area" class="opponents-area">
+                <!-- Rendu dynamique -->
+            </div>
+
+            <!-- TABLE DE JEU (pile + deck) -->
+            <div class="table-area">
+                <!-- PILE DE DÉFAUSSE -->
+                <div class="pile-zone">
+                    <div class="pile-label">Défausse</div>
+                    <div id="discard-pile">
+                        <!-- Carte du dessus rendue dynamiquement -->
+                        <div class="uno-card card-back large" style="cursor:default;">
+                            <span class="uno-card-value">?</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DECK (piocher) -->
+                <div class="pile-zone">
+                    <div class="pile-label">Pioche</div>
+                    <div class="deck-card" id="deck-draw-area" onclick="handleDrawCard()" title="Cliquez pour piocher">
+                        🂠
+                        <div class="deck-count" id="deck-count">108 cartes</div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- MAIN DU JOUEUR LOCAL -->
+        <footer class="player-hand-area">
+            <div class="hand-header">
+                <div class="hand-title" id="hand-title">Vos cartes</div>
+                <div class="hand-actions">
+                    <button id="btn-draw" class="btn btn-secondary" disabled>
+                        🃏 Piocher
+                    </button>
+                </div>
+            </div>
+            <div id="my-hand" class="hand-cards">
+                <!-- Rendu dynamique -->
+                <div style="color:var(--text-secondary);margin:auto;">Chargement de votre main…</div>
+            </div>
+        </footer>
+
+    </div>
+
+    <!-- BANDEAU C'EST VOTRE TOUR -->
+    <div class="turn-banner hidden" id="turn-banner">
+        <div class="turn-banner-inner">⚡ C'est votre tour !</div>
+    </div>
+
+    <!-- BOUTON UNO (flottant) -->
+    <button class="uno-call-btn hidden" id="btn-uno" title="Annoncer UNO !">
+        📢 UNO !
+    </button>
+
+    <!-- SÉLECTEUR DE COULEUR -->
+    <div class="modal-overlay hidden" id="color-picker-overlay">
+        <div class="modal-box">
+            <div class="modal-title">🎨 Choisissez une couleur</div>
+            <div class="color-picker-grid">
+                <div class="color-choice choice-red" data-color="red" title="Rouge">🔴</div>
+                <div class="color-choice choice-blue" data-color="blue" title="Bleu">🔵</div>
+                <div class="color-choice choice-green" data-color="green" title="Vert">🟢</div>
+                <div class="color-choice choice-yellow" data-color="yellow" title="Jaune">🟡</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ÉCRAN DE FIN DE PARTIE -->
+    <div class="gameover-overlay hidden" id="gameover-overlay">
+        <div class="gameover-box">
+            <div class="gameover-emoji">🏆</div>
+            <div class="gameover-title">Fin de partie !</div>
+            <div class="gameover-winner">Vainqueur : <strong id="winner-name">—</strong></div>
+            <ul class="scores-list" id="scores-list">
+                <!-- Rendu dynamique -->
+            </ul>
+            <button id="btn-replay" class="btn btn-primary btn-full">
+                🔄 Retour au lobby
+            </button>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATIONS -->
+    <div id="toast-container"></div>
+
+    <!-- SCRIPTS (ordre important : dépendances d'abord) -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="js/deck.js"></script>
+    <script src="js/gameState.js"></script>
+    <script src="js/peer.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/game.js"></script>
+
+    <!-- Override showGameOver pour game.html -->
+    <script>
+        // Surcharge showGameOver pour utiliser les éléments en place
+        function showGameOver(winnerId, winnerName, scores, players) {
+            const overlay = document.getElementById('gameover-overlay');
+            const winnerEl = document.getElementById('winner-name');
+            const scoresList = document.getElementById('scores-list');
+            if (winnerEl) winnerEl.textContent = winnerName || '?';
+            if (scoresList && players) {
+                scoresList.innerHTML = players.map(p => `
+        <li class="score-item">
+          <span>${escapeHtml(p.name)} ${p.id === winnerId ? '👑' : ''}</span>
+          <span>${(scores && scores[p.id]) || 0} pts</span>
+        </li>
+      `).join('');
+            }
+            if (overlay) overlay.classList.remove('hidden');
+        }
+    </script>
+
+</body>
+
+</html>
