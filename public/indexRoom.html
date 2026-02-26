@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UNO P2P</title>
+    <style>
+        [hidden] { display: none !important; }
+        body { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .screen { text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="screen" id="screen-home">
+    <h1>UNO</h1>
+
+    <div>
+        <input id="input-name-create" type="text" placeholder="Ton pseudo" maxlength="20" />
+        <select id="input-max-players">
+            <option value="2">2 joueurs</option>
+            <option value="3">3 joueurs</option>
+            <option value="4" selected>4 joueurs</option>
+            <option value="5">5 joueurs</option>
+            <option value="6">6 joueurs</option>
+            <option value="7">7 joueurs</option>
+            <option value="8">8 joueurs</option>
+            <option value="9">9 joueurs</option>
+            <option value="10">10 joueurs</option>
+        </select>
+        <button id="btn-create">Créer une partie</button>
+    </div>
+
+    <div>— ou —</div>
+
+    <div>
+        <input id="input-name-join" type="text" placeholder="Ton pseudo" maxlength="20" />
+        <input id="input-room-code" type="text" placeholder="Code de la room" maxlength="36" />
+        <button id="btn-join">Rejoindre une partie</button>
+    </div>
+</div>
+
+<div class="screen" id="screen-room" hidden>
+    <h2>Salle d'attente</h2>
+    <p>Code de la partie : <strong id="display-room-code">...</strong></p>
+    
+    <h3>Joueurs connectés :</h3>
+    <ul id="players-list" style="list-style: none; padding: 0;">
+        </ul>
+
+    <button id="ready-btn">Je suis prêt !</button>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="../public/app.js" ></script>
+<script src="indexRoom.js" ></script>
+</body>
+</html>
