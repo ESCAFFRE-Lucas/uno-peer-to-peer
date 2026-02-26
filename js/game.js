@@ -12,14 +12,9 @@ const game = {
   players: [],
   myHand: [],
   publicState: null,
-  pendingCardId: null,
   seed: null,
 };
 
-/**
- * Point d'entrée appelé par lobby.js quand la partie commence.
- * Les connexions PeerJS sont DÉJÀ établies — on ne les recrée pas.
- */
 function startGameView(info) {
   game.myId = info.myId;
   game.myName = info.myName;
@@ -30,30 +25,23 @@ function startGameView(info) {
   game.myHand = [];
   game.publicState = null;
 
-  // Basculer sur la vue de jeu
   document.getElementById("view-lobby")?.classList.add("hidden");
   document.getElementById("view-game")?.classList.remove("hidden");
 
-  // Rebrancher le handler de messages sur le jeu
   peerManager.onMessage = handleGameMessage;
   peerManager.onDisconnect = onPlayerDisconnected;
 
-  // Configurer les boutons de jeu
   setupGameButtons();
 
   if (game.isHost) {
     hostInitGame();
   }
-  // Les guests attendent GAME_START de l'hôte (le message arrive via la connexion existante)
 }
 
 // ===== HÔTE : INITIALISER LE JEU =====
 function hostInitGame() {
-  // Écrire les joueurs dans le gameState (ils ont déjà été ajoutés dans le lobby)
-  // S'assurer que les joueurs sont bien présents
   const activePlayers = gameState.players.filter((p) => p.isConnected);
   if (activePlayers.length === 0) {
-    // Reconstruire depuis game.players si nécessaire
     game.players.forEach((p) => {
       if (!gameState.players.find((gp) => gp.id === p.id)) {
         gameState.addPlayer(p);
@@ -65,14 +53,10 @@ function hostInitGame() {
   game.myHand = gameState.getPlayerHand(game.myId);
   game.publicState = gameState.getPublicState();
 
-  // Envoyer GAME_START à chaque guest avec sa main privée
   gameState.players
     .filter((p) => p.id !== game.myId && p.isConnected)
     .forEach((p) => {
       const hand = gameState.getPlayerHand(p.id);
-      console.log(
-        `[Host] Envoi GAME_START à ${p.name} (${p.peerId}) — ${hand.length} cartes`,
-      );
       peerManager.send(p.peerId, {
         action: "GAME_START",
         payload: {
@@ -98,10 +82,8 @@ function handleGameMessage(data, fromPeerId) {
   const { action, payload } = data;
 
   switch (action) {
-    // ---- Réception de l'état initial (guest) ----
-    case "GAME_START": {
+    case "GAME_START":
       game.myHand = payload.yourHand || [];
-      game.players = payload.players || game.players;
       game.publicState = {
         gameId: payload.gameId,
         gameStatus: "playing",
@@ -117,42 +99,39 @@ function handleGameMessage(data, fromPeerId) {
       renderGameState();
       showToast("La partie commence !", "success");
       break;
-    }
 
-    // ---- Jouer une carte (guest → hôte) ----
-    case "PLAY_CARD": {
+    case "PLAY_CARD":
       if (!game.isHost) return;
       hostHandlePlayCard(payload, fromPeerId);
       break;
-    }
 
-    // ---- Carte jouée confirmée (hôte → tous) ----
-    case "CARD_PLAYED": {
+    case "CARD_PLAYED":
       if (game.isHost) return;
-      const { playerId, card, publicState } = payload;
-      game.publicState = publicState;
-      if (playerId === game.myId) {
-        game.myHand = game.myHand.filter((c) => c.id !== card.id);
+      game.publicState = payload.publicState;
+      if (payload.playerId === game.myId) {
+        game.myHand = game.myHand.filter((c) => c.id !== payload.card.id);
       }
       renderGameState();
       showToast(
-        `${getPlayerName(playerId)} joue ${getCardLabel(card.value)}`,
+        `${getPlayerName(payload.playerId)} joue ${getCardLabel(payload.card.value)}`,
         "info",
         2000,
       );
       break;
-    }
 
-    // ---- Demande de pioche (guest → hôte) ----
-    case "REQUEST_DRAW": {
+    case "REQUEST_DRAW":
       if (!game.isHost) return;
       hostHandleDrawRequest(payload, fromPeerId);
       break;
-    }
 
-    // ---- Cartes piochées (hôte → joueur concerné) ----
-    case "PLAYER_DRAW": {
-      const { playerId, drawnCards, newHandCount, deckRemaining } = payload;
+    case "PLAYER_DRAW":
+      const {
+        playerId,
+        drawnCards,
+        newHandCount,
+        deckRemaining,
+        nextPlayerId,
+      } = payload;
       if (playerId === game.myId && drawnCards) {
         game.myHand.push(...drawnCards);
       }
@@ -160,76 +139,66 @@ function handleGameMessage(data, fromPeerId) {
         const p = game.publicState.players.find((pl) => pl.id === playerId);
         if (p) p.handCount = newHandCount;
         game.publicState.deckRemaining = deckRemaining;
-        game.publicState.lastActionId = payload.lastActionId;
+        // On met aussi à jour le joueur actuel pour éviter les désynchronisations visuelles
+        if (nextPlayerId) {
+          const nextIdx = game.publicState.players.findIndex(
+            (pl) => pl.id === nextPlayerId,
+          );
+          if (nextIdx !== -1) game.publicState.currentPlayerIndex = nextIdx;
+        }
       }
       renderGameState();
       if (playerId !== game.myId)
         showToast(`${getPlayerName(playerId)} a pioché`, "info", 1500);
       break;
-    }
 
-    // ---- Choix de couleur (guest → hôte) ----
-    case "SELECT_COLOR": {
+    case "SELECT_COLOR":
       if (!game.isHost) return;
       hostHandleSelectColor(payload);
       break;
-    }
 
-    // ---- Couleur mise à jour (hôte → tous) ----
-    case "UPDATE_COLOR": {
+    case "UPDATE_COLOR":
       if (game.publicState) {
         game.publicState.activeColor = payload.activeColor;
         game.publicState.currentPlayerIndex = payload.newCurrentPlayer;
         game.publicState.pendingDrawCount = payload.pendingDrawCount || 0;
-        game.publicState.lastActionId = payload.lastActionId;
       }
       renderGameState();
       showToast(`Couleur active : ${payload.activeColor}`, "info", 2000);
       break;
-    }
 
-    // ---- Annoncer UNO (guest → hôte) ----
-    case "SHOUT_UNO": {
+    case "SHOUT_UNO":
       if (!game.isHost) return;
       hostHandleUno(payload, fromPeerId);
       break;
-    }
 
-    // ---- UNO validé (hôte → tous) ----
-    case "UNO_VALIDATED": {
+    case "UNO_VALIDATED":
       if (game.publicState) {
         const p = game.publicState.players.find(
           (pl) => pl.id === payload.playerId,
         );
         if (p) p.hasSaidUno = payload.hasSaidUno;
-        game.publicState.lastActionId = payload.lastActionId;
       }
       renderGameState();
       if (payload.hasSaidUno)
         showToast(`${getPlayerName(payload.playerId)} dit UNO !`, "uno", 3000);
       break;
-    }
 
-    // ---- État public mis à jour (hôte → tous) ----
-    case "PUBLIC_STATE_UPDATE": {
+    case "PUBLIC_STATE_UPDATE":
       if (game.isHost) return;
       game.publicState = payload;
       renderGameState();
       break;
-    }
 
-    // ---- Fin de partie ----
-    case "GAME_OVER": {
+    case "GAME_OVER":
       handleGameOver(
         payload.winnerId,
         getPlayerName(payload.winnerId),
         payload.finalScores,
       );
       break;
-    }
 
-    // ---- Joueur parti ----
-    case "PLAYER_LEFT": {
+    case "PLAYER_LEFT":
       if (game.publicState) {
         const p = game.publicState.players.find(
           (pl) => pl.id === payload.playerId,
@@ -239,119 +208,69 @@ function handleGameMessage(data, fromPeerId) {
       renderGameState();
       showToast(`${getPlayerName(payload.playerId)} a quitté.`, "warning");
       break;
-    }
-
-    // ---- Migration hôte ----
-    case "HOST_MIGRATION": {
-      if (payload.newHostId === game.myId) {
-        game.isHost = true;
-        peerManager.isHost = true;
-        showToast("Vous êtes maintenant l'hôte !", "info");
-      }
-      break;
-    }
   }
 }
 
-// ===== HÔTE : Traitement PLAY_CARD =====
+// ===== LOGIQUE HÔTE =====
 function hostHandlePlayCard(payload, fromPeerId) {
   const { playerId, card } = payload;
-
-  if (playerId !== gameState.getCurrentPlayerId()) {
-    peerManager.send(fromPeerId, {
-      action: "ERROR",
-      payload: { message: "Ce n'est pas votre tour." },
-    });
-    return;
-  }
+  if (playerId !== gameState.getCurrentPlayerId()) return;
 
   const playedCard = gameState.playCard(playerId, card.id);
-  if (!playedCard) {
-    peerManager.send(fromPeerId, {
-      action: "ERROR",
-      payload: { message: "Carte invalide." },
-    });
-    return;
+  if (!playedCard) return;
+
+  // Si ce n'est pas une carte noire, on applique l'effet (et change de tour) immédiatement
+  if (playedCard.color !== "black") {
+    gameState.applyCardEffect(playedCard);
   }
 
-  // Diffuser la carte jouée
-  const cardPlayedMsg = {
+  // On broadcast l'état MIS À JOUR (incluant le nouveau tour)
+  const publicState = gameState.getPublicState();
+  peerManager.broadcast({
     action: "CARD_PLAYED",
     payload: {
       playerId,
       card: playedCard,
-      publicState: gameState.getPublicState(),
+      publicState: publicState,
     },
-  };
-  peerManager.broadcast(cardPlayedMsg);
+  });
 
-  // Mise à jour hôte local
-  game.publicState = gameState.getPublicState();
+  game.publicState = publicState;
   if (playerId === game.myId) game.myHand = gameState.getPlayerHand(game.myId);
-  renderGameState();
 
-  if (playedCard.color === "black") {
-    // Attendre le SELECT_COLOR
-    if (playerId === game.myId) {
-      showColorPicker((color) =>
-        hostApplyColorChoice(playerId, color, playedCard),
-      );
-    }
-  } else {
-    gameState.applyCardEffect(playedCard);
-    hostBroadcastPublicState();
-    hostCheckGameOver();
-  }
+  renderGameState();
+  hostCheckGameOver();
 }
 
-// ===== HÔTE : Traitement REQUEST_DRAW =====
 function hostHandleDrawRequest(payload, fromPeerId) {
   const { playerId } = payload;
+  if (playerId !== gameState.getCurrentPlayerId()) return;
 
-  if (playerId !== gameState.getCurrentPlayerId()) {
-    peerManager.send(fromPeerId, {
-      action: "ERROR",
-      payload: { message: "Ce n'est pas votre tour." },
-    });
-    return;
-  }
-
-  let count = 1;
-  if (gameState.pendingDrawCount > 0) {
-    count = gameState.pendingDrawCount;
-    gameState.pendingDrawCount = 0;
-  }
-
+  const count = gameState.pendingDrawCount > 0 ? gameState.pendingDrawCount : 1;
   const drawnCards = gameState.drawCards(playerId, count);
-  const updatedPlayer = gameState.players.find((p) => p.id === playerId);
-  const newHandCount = updatedPlayer?.handCount || 0;
+  const newHandCount =
+    gameState.players.find((p) => p.id === playerId)?.handCount || 0;
 
-  // Envoyer les cartes privées au joueur concerné
-  const drawPayload = {
-    playerId,
-    drawnCards,
-    newHandCount,
-    deckRemaining: gameState.deck.length,
-    lastActionId: gameState.lastActionId,
-  };
+  // Appliquer le tour suivant et remettre le cumul à 0
+  gameState.pendingDrawCount = 0;
+  gameState.nextTurn();
+  const nextPlayerId = gameState.getCurrentPlayerId();
 
   if (playerId === game.myId) {
-    // Hôte pioche lui-même
     game.myHand.push(...drawnCards);
-    if (game.publicState) {
-      const p = game.publicState.players.find((pl) => pl.id === playerId);
-      if (p) p.handCount = newHandCount;
-      game.publicState.deckRemaining = gameState.deck.length;
-    }
   } else {
-    // Envoyer les cartes au guest concerné
     peerManager.send(fromPeerId, {
       action: "PLAYER_DRAW",
-      payload: drawPayload,
+      payload: {
+        playerId,
+        drawnCards,
+        newHandCount,
+        deckRemaining: gameState.deck.length,
+        nextPlayerId,
+      },
     });
   }
 
-  // Diffuser l'info publique (nombre de cartes, mais PAS les cartes elles-mêmes)
   peerManager.broadcast(
     {
       action: "PLAYER_DRAW",
@@ -360,54 +279,34 @@ function hostHandleDrawRequest(payload, fromPeerId) {
         drawnCards: null,
         newHandCount,
         deckRemaining: gameState.deck.length,
-        lastActionId: gameState.lastActionId,
+        nextPlayerId,
       },
     },
     fromPeerId,
   );
 
-  // Passer au joueur suivant
-  gameState.currentPlayerIndex = gameState.getNextPlayerIndex();
-  gameState.lastActionId++;
-
   hostBroadcastPublicState();
   renderGameState();
 }
 
-// ===== HÔTE : Traitement SELECT_COLOR =====
 function hostHandleSelectColor(payload) {
   const topCard = gameState.discardPile[gameState.discardPile.length - 1];
-  hostApplyColorChoice(payload.playerId, payload.selectedColor, topCard);
-}
-
-function hostApplyColorChoice(playerId, color, card) {
-  gameState.applyCardEffect(card, color);
-  gameState.lastActionId++;
+  gameState.applyCardEffect(topCard, payload.selectedColor);
 
   peerManager.broadcast({
     action: "UPDATE_COLOR",
     payload: {
-      activeColor: color,
-      playedCardId: card.id,
+      activeColor: payload.selectedColor,
       newCurrentPlayer: gameState.currentPlayerIndex,
       pendingDrawCount: gameState.pendingDrawCount,
-      lastActionId: gameState.lastActionId,
     },
   });
-
-  if (game.publicState) {
-    game.publicState.activeColor = color;
-    game.publicState.currentPlayerIndex = gameState.currentPlayerIndex;
-    game.publicState.pendingDrawCount = gameState.pendingDrawCount;
-    game.publicState.lastActionId = gameState.lastActionId;
-  }
 
   hostBroadcastPublicState();
   hostCheckGameOver();
   renderGameState();
 }
 
-// ===== HÔTE : Traitement SHOUT_UNO =====
 function hostHandleUno(payload, fromPeerId) {
   const { shouterId, targetId, type } = payload;
   const result = gameState.validateUno(shouterId, targetId, type);
@@ -418,23 +317,13 @@ function hostHandleUno(payload, fromPeerId) {
       payload: {
         playerId: result.playerId,
         hasSaidUno: result.hasSaidUno || false,
-        lastActionId: gameState.lastActionId,
       },
     });
-
-    if (game.publicState) {
-      const p = game.publicState.players.find(
-        (pl) => pl.id === result.playerId,
-      );
-      if (p) p.hasSaidUno = result.hasSaidUno || false;
-    }
 
     if (result.penalty) {
       const target = gameState.players.find((p) => p.id === result.playerId);
       if (target && target.id !== game.myId) {
-        const penaltyCards = gameState
-          .getPlayerHand(target.id)
-          .slice(-result.penalty);
+        const penaltyCards = target.hand.slice(-2);
         peerManager.send(target.peerId, {
           action: "PLAYER_DRAW",
           payload: {
@@ -442,52 +331,37 @@ function hostHandleUno(payload, fromPeerId) {
             drawnCards: penaltyCards,
             newHandCount: target.handCount,
             deckRemaining: gameState.deck.length,
-            lastActionId: gameState.lastActionId,
           },
         });
       }
-      showToast(
-        `${getPlayerName(result.playerId)} prend 2 cartes (Contre-UNO) !`,
-        "warning",
-      );
     }
     renderGameState();
   }
 }
 
-// ===== HÔTE : Diffuser l'état public =====
 function hostBroadcastPublicState() {
   const state = gameState.getPublicState();
   game.publicState = state;
+  renderGameState(); // S'assurer que l'hôte rend après chaque broadcast
   peerManager.broadcast({ action: "PUBLIC_STATE_UPDATE", payload: state });
 }
 
-// ===== HÔTE : Vérifier fin de partie =====
 function hostCheckGameOver() {
   const winner = gameState.checkWinner();
   if (!winner) return;
 
-  gameState.gameStatus = "finished";
   const scores = gameState.calculateScores();
   peerManager.broadcast({
     action: "GAME_OVER",
-    payload: {
-      winnerId: winner.id,
-      finalScores: scores,
-      status: "finished",
-      lastActionId: gameState.lastActionId,
-    },
+    payload: { winnerId: winner.id, finalScores: scores },
   });
   handleGameOver(winner.id, winner.name, scores);
 }
 
-// ===== ACTIONS JOUEUR LOCAL =====
-
+// ===== ACTIONS DU JOUEUR LOCAL =====
 function handleCardPlay(cardId) {
-  if (game.myId !== getCurrentPlayerId()) {
-    showToast("Ce n'est pas votre tour !", "warning");
-    return;
-  }
+  if (game.myId !== getCurrentPlayerId())
+    return showToast("Ce n'est pas votre tour !", "warning");
 
   const card = game.myHand.find((c) => c.id === cardId);
   if (!card) return;
@@ -496,11 +370,7 @@ function handleCardPlay(cardId) {
     showColorPicker((color) => {
       peerManager.sendAction({
         action: "PLAY_CARD",
-        payload: {
-          playerId: game.myId,
-          card,
-          lastActionId: game.publicState?.lastActionId || 0,
-        },
+        payload: { playerId: game.myId, card },
       });
       setTimeout(() => {
         peerManager.sendAction({
@@ -514,22 +384,16 @@ function handleCardPlay(cardId) {
 
   peerManager.sendAction({
     action: "PLAY_CARD",
-    payload: {
-      playerId: game.myId,
-      card,
-      lastActionId: game.publicState?.lastActionId || 0,
-    },
+    payload: { playerId: game.myId, card },
   });
 }
 
 function handleDrawCard() {
-  if (game.myId !== getCurrentPlayerId()) {
-    showToast("Ce n'est pas votre tour !", "warning");
-    return;
-  }
+  if (game.myId !== getCurrentPlayerId())
+    return showToast("Ce n'est pas votre tour !", "warning");
   peerManager.sendAction({
     action: "REQUEST_DRAW",
-    payload: { playerId: game.myId, reason: "no_playable_card" },
+    payload: { playerId: game.myId },
   });
 }
 
@@ -540,7 +404,7 @@ function handleShoutUno() {
   });
 }
 
-// ===== RENDU DU JEU =====
+// ===== RENDU =====
 function renderGameState() {
   const state = game.publicState;
   if (!state) return;
@@ -569,7 +433,7 @@ function renderGameState() {
   const pendingEl = document.getElementById("pending-draw");
   if (pendingEl) {
     if (state.pendingDrawCount > 0) {
-      pendingEl.textContent = `+${state.pendingDrawCount} à piocher !`;
+      pendingEl.textContent = `+${state.pendingDrawCount} !`;
       pendingEl.classList.remove("hidden");
     } else {
       pendingEl.classList.add("hidden");
@@ -577,7 +441,6 @@ function renderGameState() {
   }
 }
 
-// ===== FIN DE PARTIE =====
 function handleGameOver(winnerId, winnerName, scores) {
   const overlay = document.getElementById("gameover-overlay");
   const winnerEl = document.getElementById("winner-name");
@@ -600,7 +463,6 @@ function handleGameOver(winnerId, winnerName, scores) {
   if (overlay) overlay.classList.remove("hidden");
 }
 
-// ===== UTILS =====
 function getCurrentPlayerId() {
   if (!game.publicState) return null;
   const { players, currentPlayerIndex } = game.publicState;
@@ -619,54 +481,35 @@ function getPlayerName(playerId) {
 function onPlayerDisconnected(peerId) {
   if (!game.isHost) return;
   const dp = gameState.players.find((p) => p.peerId === peerId);
-  if (!dp) return;
-
-  gameState.removePlayer(dp.id);
-  peerManager.broadcast({
-    action: "PLAYER_LEFT",
-    payload: {
-      playerId: dp.id,
-      reason: "disconnected",
-      newHostId: null,
-      lastActionId: gameState.lastActionId,
-    },
-  });
-  if (game.publicState) {
-    const p = game.publicState.players.find((pl) => pl.id === dp.id);
-    if (p) p.isConnected = false;
+  if (dp) {
+    gameState.removePlayer(dp.id);
+    peerManager.broadcast({
+      action: "PLAYER_LEFT",
+      payload: { playerId: dp.id },
+    });
+    renderGameState();
   }
-  renderGameState();
-  showToast(`${dp.name} a quitté la partie.`, "warning");
 }
 
-// ===== BOUTONS DU JEU =====
 function setupGameButtons() {
-  document
-    .getElementById("btn-draw")
-    ?.addEventListener("click", handleDrawCard);
-  document.getElementById("btn-uno")?.addEventListener("click", handleShoutUno);
-  document
-    .getElementById("deck-draw-area")
-    ?.addEventListener("click", handleDrawCard);
+  const btnDraw = document.getElementById("btn-draw");
+  if (btnDraw) btnDraw.onclick = handleDrawCard;
 
-  document.getElementById("btn-leave")?.addEventListener("click", () => {
-    if (confirm("Quitter la partie ?")) {
-      peerManager.sendAction({
-        action: "PLAYER_LEFT",
-        payload: {
-          playerId: game.myId,
-          reason: "quit",
-          newHostId: null,
-          lastActionId: game.publicState?.lastActionId || 0,
-        },
-      });
-      peerManager.destroy();
-      window.location.reload();
-    }
-  });
+  const btnUno = document.getElementById("btn-uno");
+  if (btnUno) btnUno.onclick = handleShoutUno;
 
-  document.getElementById("btn-replay")?.addEventListener("click", () => {
-    peerManager.destroy();
-    window.location.reload();
-  });
+  const deckArea = document.getElementById("deck-draw-area");
+  if (deckArea) deckArea.onclick = handleDrawCard;
+
+  const btnLeave = document.getElementById("btn-leave");
+  if (btnLeave) {
+    btnLeave.onclick = () => {
+      if (confirm("Quitter ?")) {
+        peerManager.destroy();
+        window.location.reload();
+      }
+    };
+  }
+  const btnReplay = document.getElementById("btn-replay");
+  if (btnReplay) btnReplay.onclick = () => window.location.reload();
 }

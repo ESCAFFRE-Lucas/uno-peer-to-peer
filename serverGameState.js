@@ -1,8 +1,14 @@
 /**
- * gameState.js — État global du jeu UNO P2P
- * L'hôte est le seul à avoir accès à l'intégralité (deck complet).
- * Les guests reçoivent uniquement l'état public (getPublicState).
+ * serverGameState.js — État global du jeu UNO centralisé sur le serveur
  */
+
+const {
+  generateDeck,
+  isPlayable,
+  mulberry32,
+  parseSeed,
+  shuffle,
+} = require("./serverDeck");
 
 class GameState {
   constructor() {
@@ -15,15 +21,15 @@ class GameState {
     this.seed = null;
     this.hostId = null;
 
-    this.players = []; // [{ id, peerId, name, hand, handCount, hasSaidUno, isConnected, isReady }]
+    this.players = []; // [{ id, socketId, name, hand, handCount, hasSaidUno, isConnected, isReady }]
     this.maxPlayers = 4;
 
-    this.deck = []; // cartes restantes à piocher (hôte uniquement)
-    this.discardPile = []; // pile de défausse (la dernière = visible)
-    this.currentPlayerIndex = 0; // Index relatif au tableau `players`
-    this.direction = 1; // 1 = sens normal, -1 = sens inverse
-    this.activeColor = null; // couleur active (important pour les jokers)
-    this.pendingDrawCount = 0; // cumul des +2/+4
+    this.deck = [];
+    this.discardPile = [];
+    this.currentPlayerIndex = 0;
+    this.direction = 1;
+    this.activeColor = null;
+    this.pendingDrawCount = 0;
     this.lastActionId = 0;
   }
 
@@ -34,7 +40,7 @@ class GameState {
     this.players = [
       {
         id: hostPlayer.id,
-        peerId: hostPlayer.peerId,
+        socketId: hostPlayer.socketId,
         name: hostPlayer.name,
         hand: [],
         handCount: 0,
@@ -44,7 +50,6 @@ class GameState {
       },
     ];
     this.gameStatus = "waiting";
-    return this.getRoomState();
   }
 
   addPlayer(player) {
@@ -52,7 +57,7 @@ class GameState {
     if (this.players.find((p) => p.id === player.id)) return false;
     this.players.push({
       id: player.id,
-      peerId: player.peerId,
+      socketId: player.socketId,
       name: player.name,
       hand: [],
       handCount: 0,
@@ -63,16 +68,13 @@ class GameState {
     return true;
   }
 
-  removePlayer(playerId) {
-    const idx = this.players.findIndex((p) => p.id === playerId);
-    if (idx === -1) return false;
-    this.players[idx].isConnected = false;
-
-    // Si c'est au tour du joueur qui part, on passe au suivant
-    if (this.currentPlayerIndex === idx) {
-      this.nextTurn();
+  removePlayerBySocket(socketId) {
+    const player = this.players.find((p) => p.socketId === socketId);
+    if (player) {
+      player.isConnected = false;
+      return player.id;
     }
-    return true;
+    return null;
   }
 
   setPlayerReady(playerId, isReady) {
@@ -87,48 +89,39 @@ class GameState {
       connectedPlayers.length >= 2 && notReadyPlayers.length === 0;
     return {
       canStart,
-      missingPlayers: Math.max(0, 2 - connectedPlayers.length),
-      notReadyCount: notReadyPlayers.length,
       validationMessage: canStart
-        ? "Tous les joueurs sont prêts. Lancement imminent !"
+        ? "Prêt !"
         : notReadyPlayers.length > 0
-          ? `${notReadyPlayers.length} joueur(s) pas encore prêt(s)`
-          : "Il faut au moins 2 joueurs pour lancer la partie",
+          ? `${notReadyPlayers.length} joueur(s) non prêt(s)`
+          : "Besoin de 2 joueurs",
     };
   }
 
   startGame(seed) {
     this.seed = seed;
     this.gameStatus = "playing";
-    this.lastActionId = 0;
-
-    // Générer et distribuer le deck
     this.deck = generateDeck(seed);
 
-    // Distribuer 7 cartes à chaque joueur connecté
-    const activePlayers = this.players.filter((p) => p.isConnected);
-    activePlayers.forEach((player) => {
-      player.hand = this.deck.splice(0, 7);
-      player.handCount = 7;
-      player.hasSaidUno = false;
-    });
+    this.players
+      .filter((p) => p.isConnected)
+      .forEach((player) => {
+        player.hand = this.deck.splice(0, 7);
+        player.handCount = 7;
+        player.hasSaidUno = false;
+      });
 
-    // La première carte ne doit pas être noire
     let firstCard;
     do {
       firstCard = this.deck.shift();
       if (firstCard.color === "black") {
-        this.deck.push(firstCard); // remettre à la fin
+        this.deck.push(firstCard);
         firstCard = null;
       }
     } while (!firstCard);
 
     this.discardPile = [firstCard];
     this.activeColor = firstCard.color;
-    // Commencer par l'hôte (index 0) s'il est connecté
     this.currentPlayerIndex = 0;
-    if (!this.players[0].isConnected) this.nextTurn();
-
     this.direction = 1;
     this.pendingDrawCount = 0;
     this.lastActionId = 1;
@@ -136,7 +129,7 @@ class GameState {
     return firstCard;
   }
 
-  playCard(playerId, cardId) {
+  playCard(playerId, cardId, chosenColor = null) {
     const player = this.players.find((p) => p.id === playerId);
     if (!player) return null;
 
@@ -154,19 +147,19 @@ class GameState {
 
     if (player.hand.length > 1) player.hasSaidUno = false;
 
+    this.applyCardEffect(card, chosenColor);
     this.lastActionId++;
     return card;
   }
 
   applyCardEffect(card, chosenColor = null) {
+    const activePlayers = this.players.filter((p) => p.isConnected);
     let skipExtra = false;
 
     switch (card.value) {
       case "reverse":
         this.direction *= -1;
-        // Si 2 joueurs, reverse agit comme un skip
-        if (this.players.filter((p) => p.isConnected).length === 2)
-          skipExtra = true;
+        if (activePlayers.length === 2) skipExtra = true;
         break;
       case "skip":
         skipExtra = true;
@@ -187,26 +180,28 @@ class GameState {
       this.activeColor = card.color;
     }
 
-    this.nextTurn();
+    this.currentPlayerIndex = this.getNextPlayerIndex();
     if (skipExtra) {
-      this.nextTurn();
+      this.currentPlayerIndex = this.getNextPlayerIndex();
     }
-    this.lastActionId++;
   }
 
-  nextTurn() {
-    if (this.players.length === 0) return;
+  getNextPlayerIndex() {
+    const activePlayers = this.players.filter((p) => p.isConnected);
+    if (activePlayers.length === 0) return 0;
 
-    let iterations = 0;
+    const currentPlayer =
+      activePlayers[this.currentPlayerIndex % activePlayers.length];
+    const realIdx = this.players.indexOf(currentPlayer);
+
+    let nextRealIdx = realIdx;
     do {
-      this.currentPlayerIndex =
-        (this.currentPlayerIndex + this.direction + this.players.length) %
+      nextRealIdx =
+        (nextRealIdx + this.direction + this.players.length) %
         this.players.length;
-      iterations++;
-    } while (
-      !this.players[this.currentPlayerIndex].isConnected &&
-      iterations < this.players.length
-    );
+    } while (!this.players[nextRealIdx].isConnected);
+
+    return activePlayers.indexOf(this.players[nextRealIdx]);
   }
 
   drawCards(playerId, count = 1) {
@@ -223,6 +218,15 @@ class GameState {
     }
     player.handCount = player.hand.length;
     player.hasSaidUno = false;
+
+    // Si on a pioché 1 seule carte car on ne pouvait pas jouer, on passe le tour
+    if (count === 1 && this.pendingDrawCount === 0) {
+      this.currentPlayerIndex = this.getNextPlayerIndex();
+    } else {
+      this.pendingDrawCount = 0; // On vient de subir la pénalité
+      this.currentPlayerIndex = this.getNextPlayerIndex();
+    }
+
     this.lastActionId++;
     return drawn;
   }
@@ -281,16 +285,13 @@ class GameState {
       hostId: this.hostId,
       players: this.players.map((p) => ({
         id: p.id,
-        peerId: p.peerId,
         name: p.name,
         handCount: p.handCount,
         hasSaidUno: p.hasSaidUno,
         isConnected: p.isConnected,
         isReady: p.isReady,
       })),
-      discardTop: this.discardPile.length
-        ? this.discardPile[this.discardPile.length - 1]
-        : null,
+      discardTop: this.discardPile[this.discardPile.length - 1] || null,
       deckRemaining: this.deck.length,
       currentPlayerIndex: this.currentPlayerIndex,
       direction: this.direction,
@@ -300,31 +301,10 @@ class GameState {
     };
   }
 
-  getRoomState() {
-    return {
-      gameId: this.gameId,
-      gameStatus: this.gameStatus,
-      hostId: this.hostId,
-      players: this.players.map((p) => ({
-        id: p.id,
-        peerId: p.peerId,
-        name: p.name,
-        isReady: p.isReady,
-        isConnected: p.isConnected,
-      })),
-      maxPlayers: this.maxPlayers,
-    };
-  }
-
-  getPlayerHand(playerId) {
-    const player = this.players.find((p) => p.id === playerId);
-    return player ? player.hand : [];
-  }
-
   getCurrentPlayerId() {
-    const player = this.players[this.currentPlayerIndex];
-    return player ? player.id : null;
+    const activePlayers = this.players.filter((p) => p.isConnected);
+    return activePlayers[this.currentPlayerIndex]?.id;
   }
 }
 
-const gameState = new GameState();
+module.exports = GameState;

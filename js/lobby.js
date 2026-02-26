@@ -152,7 +152,6 @@ function onStartGame() {
     },
   });
 
-  // L'hôte démarre aussi — sur la même page, connexions intactes
   handleStartGame(seed);
 }
 
@@ -182,27 +181,12 @@ function handleLobbyMessage(data, fromPeerId) {
       }
 
       lobby.players = gameState.players.slice();
-
-      // Envoyer l'état complet de la room au nouveau guest
       peerManager.send(fromPeerId, {
         action: "ROOM_CREATED",
         payload: { ...gameState.getRoomState(), yourPlayerId: newId },
       });
-
-      // Notifier les autres guests
       peerManager.broadcast(
-        {
-          action: "PLAYER_JOINED",
-          payload: {
-            player: {
-              id: newId,
-              peerId: fromPeerId,
-              name: payload.name,
-              isReady: false,
-              isConnected: true,
-            },
-          },
-        },
+        { action: "PLAYER_JOINED", payload: { player: newPlayer } },
         fromPeerId,
       );
 
@@ -212,26 +196,22 @@ function handleLobbyMessage(data, fromPeerId) {
       break;
     }
 
-    case "ROOM_CREATED": {
-      if (lobby.isHost) return;
+    case "ROOM_CREATED":
       lobby.myId = payload.yourPlayerId;
       lobby.players = payload.players || [];
       showRoomPanel(lobby.roomCode);
       updateLobbyUI();
       break;
-    }
 
-    case "PLAYER_JOINED": {
-      if (lobby.isHost) return;
+    case "PLAYER_JOINED":
       if (!lobby.players.find((p) => p.id === payload.player.id)) {
         lobby.players.push(payload.player);
       }
       updateLobbyUI();
       showToast(`${payload.player.name} a rejoint la partie !`, "success");
       break;
-    }
 
-    case "PLAYER_READY_CHANGE": {
+    case "PLAYER_READY_CHANGE":
       if (lobby.isHost) {
         gameState.setPlayerReady(payload.playerId, payload.isReady);
         lobby.players = gameState.players.slice();
@@ -246,11 +226,6 @@ function handleLobbyMessage(data, fromPeerId) {
       }
       updateLobbyUI();
       break;
-    }
-
-    case "LOBBY_VALIDATION":
-      if (!payload.canStart) showToast(payload.validationMessage, "warning");
-      break;
 
     case "START_GAME_SIGNAL":
       handleStartGame(payload.seed);
@@ -264,22 +239,12 @@ function handleLobbyMessage(data, fromPeerId) {
       break;
     }
 
-    case "HOST_MIGRATION": {
-      if (payload.newHostId === lobby.myId) {
-        lobby.isHost = true;
-        peerManager.isHost = true;
-        showToast("Vous êtes maintenant l'hôte !", "info");
-      }
-      break;
-    }
-
     case "ERROR":
       showToast(payload.message, "error");
       break;
   }
 }
 
-// ===== DÉMARRER LE JEU (SPA — pas de redirection) =====
 function handleStartGame(seed) {
   // Passer le relais au module game.js avec les infos actuelles
   startGameView({
@@ -292,7 +257,6 @@ function handleStartGame(seed) {
   });
 }
 
-// ===== EVENTS PeerManager lobby =====
 function onPeerConnected(peerId) {
   console.log("[Lobby] Peer connecté:", peerId);
 }
@@ -305,37 +269,26 @@ function onPeerDisconnected(peerId) {
     lobby.players = gameState.players.slice();
     peerManager.broadcast({
       action: "PLAYER_LEFT",
-      payload: {
-        playerId: dp.id,
-        reason: "disconnected",
-        newHostId: null,
-        lastActionId: gameState.lastActionId,
-      },
+      payload: { playerId: dp.id },
     });
     updateLobbyUI();
     updateStartButton();
   }
 }
 
-// ===== HELPERS UI =====
 function showRoomPanel(roomCode) {
   lobby.roomCode = roomCode;
   document.getElementById("landing-section")?.classList.add("hidden");
-  const roomSection = document.getElementById("room-section");
-  if (roomSection) roomSection.classList.remove("hidden");
-
-  const codeDisplay = document.getElementById("room-code-display");
-  if (lobby.isHost && codeDisplay) {
-    codeDisplay.classList.remove("hidden");
-    const el = document.getElementById("room-code-value");
-    if (el) el.textContent = roomCode;
-  }
+  document.getElementById("room-section")?.classList.remove("hidden");
 
   const startBtn = document.getElementById("btn-start");
   const readyBtn = document.getElementById("btn-ready");
   if (lobby.isHost) {
     startBtn?.classList.remove("hidden");
     readyBtn?.classList.add("hidden");
+    const el = document.getElementById("room-code-value");
+    if (el) el.textContent = roomCode;
+    document.getElementById("room-code-display")?.classList.remove("hidden");
   } else {
     startBtn?.classList.add("hidden");
     readyBtn?.classList.remove("hidden");
@@ -344,23 +297,19 @@ function showRoomPanel(roomCode) {
 
 function updateLobbyUI() {
   renderLobbyPlayers(lobby.players, lobby.myId);
-
   const count = lobby.players.filter((p) => p.isConnected).length;
   const statusEl = document.getElementById("lobby-status");
   if (statusEl) statusEl.textContent = `${count} / 4 joueur(s) connecté(s)`;
 
-  const readyBtn = document.getElementById("btn-ready");
-  if (lobby.isHost) {
-    readyBtn?.classList.add("hidden");
-    return;
-  }
-  const me = lobby.players.find((p) => p.id === lobby.myId);
-  if (readyBtn && me) {
-    readyBtn.classList.remove("hidden");
-    readyBtn.textContent = me.isReady ? "✓ Prêt" : "Je suis prêt";
-    readyBtn.className = me.isReady
-      ? "btn btn-success btn-full"
-      : "btn btn-secondary btn-full";
+  if (!lobby.isHost) {
+    const me = lobby.players.find((p) => p.id === lobby.myId);
+    const readyBtn = document.getElementById("btn-ready");
+    if (readyBtn && me) {
+      readyBtn.textContent = me.isReady ? "✓ Prêt" : "Je suis prêt";
+      readyBtn.className = me.isReady
+        ? "btn btn-success btn-full"
+        : "btn btn-secondary btn-full";
+    }
   }
 }
 
@@ -370,7 +319,6 @@ function updateStartButton() {
   if (!btn) return;
   const val = gameState.getLobbyValidation();
   btn.disabled = !val.canStart;
-  btn.title = val.validationMessage;
 }
 
 function setLoadingState(loading) {

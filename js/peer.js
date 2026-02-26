@@ -19,11 +19,6 @@ class PeerManager {
     this.onReady = null; // (myPeerId) => void
   }
 
-  /**
-   * Crée un peer PeerJS avec un ID aléatoire.
-   * @param {string} displayName — Nom d'affichage (pour les logs)
-   * @returns {Promise<string>} myPeerId
-   */
   initPeer(displayName = "") {
     return new Promise((resolve, reject) => {
       this.peer = new Peer(undefined, {
@@ -57,23 +52,14 @@ class PeerManager {
     });
   }
 
-  /**
-   * MODE HÔTE : écoute les connexions entrantes des guests.
-   */
   listenAsHost() {
     this.isHost = true;
-
     this.peer.on("connection", (conn) => {
       console.log(`[Host] Nouvelle connexion entrante : ${conn.peer}`);
       this._setupConnection(conn);
     });
   }
 
-  /**
-   * MODE GUEST : se connecte à l'hôte.
-   * @param {string} hostPeerId
-   * @returns {Promise<void>}
-   */
   connectToHost(hostPeerId) {
     return new Promise((resolve, reject) => {
       const conn = this.peer.connect(hostPeerId, {
@@ -96,10 +82,6 @@ class PeerManager {
     });
   }
 
-  /**
-   * Configure les listeners sur une connexion.
-   * @param {DataConnection} conn
-   */
   _setupConnection(conn) {
     this.connections[conn.peer] = conn;
 
@@ -124,11 +106,6 @@ class PeerManager {
     });
   }
 
-  /**
-   * Envoie un message à un peer spécifique.
-   * @param {string} peerId
-   * @param {object} data
-   */
   send(peerId, data) {
     const conn = this.connections[peerId];
     if (conn && conn.open) {
@@ -140,11 +117,6 @@ class PeerManager {
     }
   }
 
-  /**
-   * Diffuse un message à tous les peers connectés (hôte → tous les guests).
-   * @param {object} data
-   * @param {string|null} excludePeerId — exclure ce peer du broadcast
-   */
   broadcast(data, excludePeerId = null) {
     Object.entries(this.connections).forEach(([peerId, conn]) => {
       if (peerId !== excludePeerId && conn.open) {
@@ -153,41 +125,28 @@ class PeerManager {
     });
   }
 
-  /**
-   * Envoie un message à l'hôte (depuis un guest).
-   * @param {object} data
-   */
   sendToHost(data) {
     if (this.hostConn && this.hostConn.open) {
       this.hostConn.send(data);
     } else if (this.isHost) {
-      // L'hôte traite ses propres messages directement
       if (this.onMessage) this.onMessage(data, this.myPeerId);
     } else {
       console.warn("[Guest] Connexion à l'hôte non disponible.");
     }
   }
 
-  /**
-   * Envoi sécurisé : si on est hôte, traite localement. Sinon envoie à l'hôte.
-   * Utilisé par les guests ET l'hôte pour les messages de jeu.
-   * @param {object} data
-   */
   sendAction(data) {
     if (this.isHost) {
-      // L'hôte traite ses propres actions
       if (this.onMessage) this.onMessage(data, this.myPeerId);
     } else {
       this.sendToHost(data);
     }
   }
 
-  /** Retourne la liste des peerId connectés */
   getConnectedPeers() {
     return Object.keys(this.connections);
   }
 
-  /** Ferme toutes les connexions */
   destroy() {
     if (this.peer) {
       this.peer.destroy();
@@ -195,5 +154,4 @@ class PeerManager {
   }
 }
 
-// Singleton
 const peerManager = new PeerManager();
