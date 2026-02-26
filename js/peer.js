@@ -27,6 +27,9 @@ class PeerManager {
   initPeer(displayName = "") {
     return new Promise((resolve, reject) => {
       this.peer = new Peer(undefined, {
+        host: window.location.hostname,
+        port: 9000,
+        path: "/peerjs",
         debug: 0,
       });
 

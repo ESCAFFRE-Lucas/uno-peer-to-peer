@@ -1,17 +1,17 @@
 /**
- * lobby.js — Logique du lobby UNO P2P
- * Gère la création/rejoindre une salle, les joueurs, et le lancement
+ * lobby.js — Logique du lobby UNO P2P (Single Page App)
+ * Pas de redirection — on affiche/masque les vues directement.
  */
 
 // ===== ÉTAT LOCAL DU LOBBY =====
 const lobby = {
-  myId: null, // ID du joueur local (ex: "p1", "p2")
-  myName: null, // Pseudo du joueur local
-  myPeerId: null, // PeerID WebRTC local
+  myId: null,
+  myName: null,
+  myPeerId: null,
   isHost: false,
   hostPeerId: null,
-  roomCode: null, // PeerID de l'hôte = code de la room
-  players: [], // Copie locale de la liste des joueurs
+  roomCode: null,
+  players: [],
 };
 
 // ===== INITIALISATION =====
@@ -20,34 +20,32 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function setupLobbyUI() {
-  const createBtn = document.getElementById("btn-create");
-  const joinBtn = document.getElementById("btn-join");
-  const readyBtn = document.getElementById("btn-ready");
-  const startBtn = document.getElementById("btn-start");
+  document
+    .getElementById("btn-create")
+    ?.addEventListener("click", onCreateLobby);
+  document.getElementById("btn-join")?.addEventListener("click", onJoinLobby);
+  document
+    .getElementById("btn-ready")
+    ?.addEventListener("click", onToggleReady);
+  document.getElementById("btn-start")?.addEventListener("click", onStartGame);
+  document
+    .getElementById("btn-quit-lobby")
+    ?.addEventListener("click", () => window.location.reload());
 
-  if (createBtn) createBtn.addEventListener("click", onCreateLobby);
-  if (joinBtn) joinBtn.addEventListener("click", onJoinLobby);
-  if (readyBtn) readyBtn.addEventListener("click", onToggleReady);
-  if (startBtn) startBtn.addEventListener("click", onStartGame);
-
-  // Copier le code de la room
-  const copyBtn = document.getElementById("btn-copy-room");
-  if (copyBtn) {
-    copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(lobby.roomCode || "");
-      copyBtn.textContent = "Copié !";
-      setTimeout(() => (copyBtn.textContent = "Copier"), 1500);
-    });
-  }
+  document.getElementById("btn-copy-room")?.addEventListener("click", () => {
+    navigator.clipboard.writeText(lobby.roomCode || "");
+    const btn = document.getElementById("btn-copy-room");
+    btn.textContent = "Copié !";
+    setTimeout(() => (btn.textContent = "Copier"), 1500);
+  });
 }
 
-// ===== CRÉER UNE PARTIE =====
+// ===== CRÉER UNE PARTIE (Hôte) =====
 async function onCreateLobby() {
   const name = document.getElementById("host-name")?.value?.trim();
-  if (!name) return showLobbyError("Entrez votre pseudo !");
+  if (!name) return showToast("Entrez votre pseudo !", "error");
 
   setLoadingState(true);
-
   try {
     lobby.myName = name;
     lobby.isHost = true;
@@ -58,40 +56,31 @@ async function onCreateLobby() {
     lobby.myId = "p1";
     lobby.roomCode = peerId;
 
-    // Initialiser la salle dans le GameState
-    gameState.initRoom(`uno-${peerId.slice(-6)}`, {
-      id: "p1",
-      peerId: peerId,
-      name: name,
-    });
+    gameState.initRoom(`uno-${peerId.slice(-6)}`, { id: "p1", peerId, name });
     lobby.players = [...gameState.players];
 
-    // Écouter les guests entrants
     peerManager.listenAsHost();
     peerManager.onMessage = handleLobbyMessage;
     peerManager.onConnect = onPeerConnected;
     peerManager.onDisconnect = onPeerDisconnected;
 
-    // Afficher l'interface hôte
     showRoomPanel(peerId);
     updateLobbyUI();
-
     setLoadingState(false);
   } catch (err) {
     setLoadingState(false);
-    showLobbyError("Impossible de créer la partie : " + err.message);
+    showToast("Impossible de créer la partie : " + err.message, "error");
   }
 }
 
-// ===== REJOINDRE UNE PARTIE =====
+// ===== REJOINDRE UNE PARTIE (Guest) =====
 async function onJoinLobby() {
   const name = document.getElementById("guest-name")?.value?.trim();
   const code = document.getElementById("room-code")?.value?.trim();
-  if (!name) return showLobbyError("Entrez votre pseudo !");
-  if (!code) return showLobbyError("Entrez le code de la partie !");
+  if (!name) return showToast("Entrez votre pseudo !", "error");
+  if (!code) return showToast("Entrez le code de la partie !", "error");
 
   setLoadingState(true);
-
   try {
     lobby.myName = name;
     lobby.isHost = false;
@@ -106,40 +95,30 @@ async function onJoinLobby() {
 
     await peerManager.connectToHost(code);
 
-    // Envoyer JOIN_GAME à l'hôte
-    const joinMsg = {
+    peerManager.sendToHost({
       action: "JOIN_GAME",
-      payload: {
-        peerId: peerId,
-        name: name,
-        isReady: false,
-      },
-    };
-    peerManager.sendToHost(joinMsg);
+      payload: { peerId, name, isReady: false },
+    });
 
     showRoomPanel(code);
     setLoadingState(false);
   } catch (err) {
     setLoadingState(false);
-    showLobbyError("Impossible de rejoindre la partie : " + err.message);
+    showToast("Impossible de rejoindre : " + err.message, "error");
   }
 }
 
-// ===== TOGGLE PRÊT =====
+// ===== TOGGLE PRÊT (Guest) =====
 function onToggleReady() {
-  if (lobby.isHost) return; // L'hôte est toujours prêt
+  if (lobby.isHost) return;
   const me = lobby.players.find((p) => p.id === lobby.myId);
   const newReady = !(me?.isReady || false);
 
   peerManager.sendAction({
     action: "PLAYER_READY_CHANGE",
-    payload: {
-      playerId: lobby.myId,
-      isReady: newReady,
-    },
+    payload: { playerId: lobby.myId, isReady: newReady },
   });
 
-  // Mise à jour optimiste locale
   if (me) me.isReady = newReady;
   updateLobbyUI();
 }
@@ -150,52 +129,41 @@ function onStartGame() {
 
   const validation = gameState.getLobbyValidation();
   if (!validation.canStart) {
-    showLobbyError(validation.validationMessage);
+    showToast(validation.validationMessage, "warning");
     return;
   }
 
-  // Diffuser la validation
-  const validationMsg = {
+  peerManager.broadcast({
     action: "LOBBY_VALIDATION",
     payload: {
       canStart: true,
-      missingPlayers: 0,
-      notReadyCount: 0,
       validationMessage: "Tous les joueurs sont prêts. Lancement imminent !",
     },
-  };
-  peerManager.broadcast(validationMsg);
+  });
 
-  // Générer le seed et lancer
   const seed = generateSeed();
-  const startSignal = {
+  peerManager.broadcast({
     action: "START_GAME_SIGNAL",
     payload: {
       gameStatus: "playing",
-      seed: seed,
+      seed,
       initialTurnIndex: 0,
       lastActionId: 1,
     },
-  };
-  peerManager.broadcast(startSignal);
+  });
 
-  // L'hôte aussi démarre
+  // L'hôte démarre aussi — sur la même page, connexions intactes
   handleStartGame(seed);
 }
 
-// ===== MESSAGES DU LOBBY (reçus) =====
+// ===== HANDLER MESSAGES LOBBY =====
 function handleLobbyMessage(data, fromPeerId) {
   const { action, payload } = data;
 
   switch (action) {
-    // ---- Guest rejoint ----
     case "JOIN_GAME": {
       if (!lobby.isHost) return;
-
-      // Générer un ID joueur
-      const playerCount = gameState.players.length;
-      const newId = `p${playerCount + 1}`;
-
+      const newId = `p${gameState.players.length + 1}`;
       const newPlayer = {
         id: newId,
         peerId: fromPeerId,
@@ -215,57 +183,56 @@ function handleLobbyMessage(data, fromPeerId) {
 
       lobby.players = gameState.players.slice();
 
-      // Envoyer l'état de la room au nouveau guest (son ID inclus)
+      // Envoyer l'état complet de la room au nouveau guest
       peerManager.send(fromPeerId, {
         action: "ROOM_CREATED",
-        payload: {
-          ...gameState.getRoomState(),
-          yourPlayerId: newId,
-        },
+        payload: { ...gameState.getRoomState(), yourPlayerId: newId },
       });
 
-      // Notifier tout le monde
-      const joinedMsg = {
-        action: "PLAYER_JOINED",
-        payload: {
-          player: {
-            id: newId,
-            peerId: fromPeerId,
-            name: payload.name,
-            isReady: false,
-            isConnected: true,
+      // Notifier les autres guests
+      peerManager.broadcast(
+        {
+          action: "PLAYER_JOINED",
+          payload: {
+            player: {
+              id: newId,
+              peerId: fromPeerId,
+              name: payload.name,
+              isReady: false,
+              isConnected: true,
+            },
           },
         },
-      };
-      peerManager.broadcast(joinedMsg, fromPeerId);
+        fromPeerId,
+      );
 
       updateLobbyUI();
       updateStartButton();
+      showToast(`${payload.name} a rejoint la partie !`, "success");
       break;
     }
 
-    // ---- État initial de la room (reçu par le guest) ----
     case "ROOM_CREATED": {
       if (lobby.isHost) return;
       lobby.myId = payload.yourPlayerId;
       lobby.players = payload.players || [];
+      showRoomPanel(lobby.roomCode);
       updateLobbyUI();
       break;
     }
 
-    // ---- Nouveau joueur arrivé (broadcast) ----
     case "PLAYER_JOINED": {
       if (lobby.isHost) return;
-      const exists = lobby.players.find((p) => p.id === payload.player.id);
-      if (!exists) lobby.players.push(payload.player);
+      if (!lobby.players.find((p) => p.id === payload.player.id)) {
+        lobby.players.push(payload.player);
+      }
       updateLobbyUI();
+      showToast(`${payload.player.name} a rejoint la partie !`, "success");
       break;
     }
 
-    // ---- Changement de statut prêt ----
     case "PLAYER_READY_CHANGE": {
       if (lobby.isHost) {
-        // L'hôte met à jour et rediffuse
         gameState.setPlayerReady(payload.playerId, payload.isReady);
         lobby.players = gameState.players.slice();
         peerManager.broadcast(
@@ -274,7 +241,6 @@ function handleLobbyMessage(data, fromPeerId) {
         );
         updateStartButton();
       } else {
-        // Guest reçoit la mise à jour
         const p = lobby.players.find((pl) => pl.id === payload.playerId);
         if (p) p.isReady = payload.isReady;
       }
@@ -282,21 +248,14 @@ function handleLobbyMessage(data, fromPeerId) {
       break;
     }
 
-    // ---- Validation du lancement ----
-    case "LOBBY_VALIDATION": {
-      if (!payload.canStart) {
-        showLobbyError(payload.validationMessage);
-      }
+    case "LOBBY_VALIDATION":
+      if (!payload.canStart) showToast(payload.validationMessage, "warning");
       break;
-    }
 
-    // ---- Signal de démarrage ----
-    case "START_GAME_SIGNAL": {
+    case "START_GAME_SIGNAL":
       handleStartGame(payload.seed);
       break;
-    }
 
-    // ---- Joueur déconnecté ----
     case "PLAYER_LEFT": {
       const p = lobby.players.find((pl) => pl.id === payload.playerId);
       if (p) p.isConnected = false;
@@ -305,90 +264,81 @@ function handleLobbyMessage(data, fromPeerId) {
       break;
     }
 
-    // ---- Migration d'hôte ----
     case "HOST_MIGRATION": {
       if (payload.newHostId === lobby.myId) {
         lobby.isHost = true;
         peerManager.isHost = true;
-        showToast("Vous êtes maintenant l'hôte de la partie !", "info");
+        showToast("Vous êtes maintenant l'hôte !", "info");
       }
       break;
     }
 
-    case "ERROR": {
-      showLobbyError(payload.message);
+    case "ERROR":
+      showToast(payload.message, "error");
       break;
-    }
   }
 }
 
-// ===== DÉMARRAGE DU JEU =====
+// ===== DÉMARRER LE JEU (SPA — pas de redirection) =====
 function handleStartGame(seed) {
-  // Stocker les infos essentielles pour game.html
-  sessionStorage.setItem("uno_seed", seed);
-  sessionStorage.setItem("uno_my_id", lobby.myId);
-  sessionStorage.setItem("uno_my_name", lobby.myName);
-  sessionStorage.setItem("uno_is_host", lobby.isHost ? "1" : "0");
-  sessionStorage.setItem("uno_room_code", lobby.roomCode);
-  sessionStorage.setItem(
-    "uno_host_peer_id",
-    lobby.hostPeerId || lobby.myPeerId,
-  );
-  sessionStorage.setItem("uno_players", JSON.stringify(lobby.players));
-  sessionStorage.setItem("uno_my_peer_id", lobby.myPeerId);
-
-  // Redirection vers game.html
-  window.location.href = "game.html";
+  // Passer le relais au module game.js avec les infos actuelles
+  startGameView({
+    myId: lobby.myId,
+    myName: lobby.myName,
+    myPeerId: lobby.myPeerId,
+    isHost: lobby.isHost,
+    seed: seed,
+    players: lobby.players.slice(),
+  });
 }
 
-// ===== EVENTS PeerManager =====
+// ===== EVENTS PeerManager lobby =====
 function onPeerConnected(peerId) {
   console.log("[Lobby] Peer connecté:", peerId);
 }
 
 function onPeerDisconnected(peerId) {
-  if (lobby.isHost) {
-    const dp = gameState.players.find((p) => p.peerId === peerId);
-    if (dp) {
-      gameState.removePlayer(dp.id);
-      lobby.players = gameState.players.slice();
-
-      // Notifier tout le monde
-      peerManager.broadcast({
-        action: "PLAYER_LEFT",
-        payload: {
-          playerId: dp.id,
-          reason: "disconnected",
-          newHostId: null,
-          lastActionId: gameState.lastActionId,
-        },
-      });
-      updateLobbyUI();
-      updateStartButton();
-    }
+  if (!lobby.isHost) return;
+  const dp = gameState.players.find((p) => p.peerId === peerId);
+  if (dp) {
+    gameState.removePlayer(dp.id);
+    lobby.players = gameState.players.slice();
+    peerManager.broadcast({
+      action: "PLAYER_LEFT",
+      payload: {
+        playerId: dp.id,
+        reason: "disconnected",
+        newHostId: null,
+        lastActionId: gameState.lastActionId,
+      },
+    });
+    updateLobbyUI();
+    updateStartButton();
   }
 }
 
-// ===== UI HELPERS =====
+// ===== HELPERS UI =====
 function showRoomPanel(roomCode) {
   lobby.roomCode = roomCode;
   document.getElementById("landing-section")?.classList.add("hidden");
-  document.getElementById("room-section")?.classList.remove("hidden");
-  document.getElementById("room-code-display")?.classList.remove("hidden");
+  const roomSection = document.getElementById("room-section");
+  if (roomSection) roomSection.classList.remove("hidden");
 
-  const el = document.getElementById("room-code-value");
-  if (el) el.textContent = roomCode;
+  const codeDisplay = document.getElementById("room-code-display");
+  if (lobby.isHost && codeDisplay) {
+    codeDisplay.classList.remove("hidden");
+    const el = document.getElementById("room-code-value");
+    if (el) el.textContent = roomCode;
+  }
 
-  // Afficher les boutons selon le rôle
   const startBtn = document.getElementById("btn-start");
   const readyBtn = document.getElementById("btn-ready");
-
   if (lobby.isHost) {
-    if (startBtn) startBtn.classList.remove("hidden");
-    if (readyBtn) readyBtn.classList.add("hidden");
+    startBtn?.classList.remove("hidden");
+    readyBtn?.classList.add("hidden");
   } else {
-    if (startBtn) startBtn.classList.add("hidden");
-    if (readyBtn) readyBtn.classList.remove("hidden");
+    startBtn?.classList.add("hidden");
+    readyBtn?.classList.remove("hidden");
   }
 }
 
@@ -397,15 +347,11 @@ function updateLobbyUI() {
 
   const count = lobby.players.filter((p) => p.isConnected).length;
   const statusEl = document.getElementById("lobby-status");
-  if (statusEl) {
-    statusEl.textContent = `${count} / 4 joueur(s) connecté(s)`;
-  }
+  if (statusEl) statusEl.textContent = `${count} / 4 joueur(s) connecté(s)`;
 
-  // Mettre à jour le bouton prêt (guests seulement)
   const readyBtn = document.getElementById("btn-ready");
   if (lobby.isHost) {
-    // L'hôte ne voit jamais le bouton prêt
-    if (readyBtn) readyBtn.classList.add("hidden");
+    readyBtn?.classList.add("hidden");
     return;
   }
   const me = lobby.players.find((p) => p.id === lobby.myId);
@@ -422,18 +368,14 @@ function updateStartButton() {
   if (!lobby.isHost) return;
   const btn = document.getElementById("btn-start");
   if (!btn) return;
-  const validation = gameState.getLobbyValidation();
-  btn.disabled = !validation.canStart;
-  btn.title = validation.canStart ? "" : validation.validationMessage;
-}
-
-function showLobbyError(msg) {
-  showToast(msg, "error");
+  const val = gameState.getLobbyValidation();
+  btn.disabled = !val.canStart;
+  btn.title = val.validationMessage;
 }
 
 function setLoadingState(loading) {
-  const createBtn = document.getElementById("btn-create");
-  const joinBtn = document.getElementById("btn-join");
-  if (createBtn) createBtn.disabled = loading;
-  if (joinBtn) joinBtn.disabled = loading;
+  const c = document.getElementById("btn-create");
+  const j = document.getElementById("btn-join");
+  if (c) c.disabled = loading;
+  if (j) j.disabled = loading;
 }

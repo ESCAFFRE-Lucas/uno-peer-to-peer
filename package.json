@@ -1,0 +1,26 @@
+{
+  "name": "uno-peer-to-peer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "server": "node server.js",
+    "serve": "npx serve . -p 3000 --no-clipboard",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ESCAFFRE-Lucas/uno-peer-to-peer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ESCAFFRE-Lucas/uno-peer-to-peer/issues"
+  },
+  "homepage": "https://github.com/ESCAFFRE-Lucas/uno-peer-to-peer#readme",
+  "dependencies": {
+    "peer": "^1.0.2"
+  }
+}
